@@ -1,0 +1,51 @@
+---
+
+
+- name: Check if certificate already exists
+  stat:
+    path: "/etc/letsencrypt/live/{{ certbot_nginx_cert_name | default(domain_name, true) }}/cert.pem"
+  register: letsencrypt_cert
+
+- name: Stop services to allow certbot to generate a cert.
+  service:
+    name: "{{ item }}"
+    state: stopped
+  when: not letsencrypt_cert.stat.exists
+  with_items: 
+    - nginx
+    - apache2
+  ignore_errors: true
+
+- name: "Generate new certificate if one doesn't exist"
+  shell: >
+    certbot certonly --standalone --email '{{ letsencrypt_email }}'
+    --agree-tos -d '{{ domain_name }}'
+    {% if certbot_nginx_cert_name is defined %}
+    --cert-name '{{ certbot_nginx_cert_name }}'
+    {% endif %}
+    {% if letsencrypt_staging %} --staging {% endif %}
+  when: not letsencrypt_cert.stat.exists
+
+- name: Force generation of a new certificate
+  shell: >
+    certbot certonly --force-renewal --standalone --email '{{ letsencrypt_email }}'
+    --agree-tos -d '{{ domain_name }}'
+    {% if certbot_nginx_cert_name is defined %}
+    --cert-name '{{ certbot_nginx_cert_name }}'
+    {% endif %}
+    {% if letsencrypt_staging %} --staging {% endif %}
+    {% if ansible_distribution_version >= "20.04" %} --non-interactive {% endif %}
+  when: letsencrypt_cert.stat.exists and certbot_force_update | bool
+  notify: reload nginx
+
+- name: Start nginx after cert has been generated.
+  service:
+    name: nginx
+    state: started
+  when: not letsencrypt_cert.stat.exists and nginx_running
+
+- name: Start apache after cert has been generated.
+  service:
+    name: apache2
+    state: started
+  when: not letsencrypt_cert.stat.exists and apache_running

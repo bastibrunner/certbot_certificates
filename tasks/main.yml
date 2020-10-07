@@ -1,33 +1,54 @@
 ---
-- name: Set Certbot package name and versions (Ubuntu >= 20.04)
-  set_fact:
-    certbot_version: 0.40.0-1
-    certbot_nginx_version: 0.40.0-0ubuntu0.1
-    certbot_nginx_name: python3-certbot-nginx
-  when: ansible_distribution_version >= "20.04"
 
-- name: Set Certbot package name and versions (Ubuntu < 20.04)
-  set_fact:
-    certbot_version: 0.31.0-1+ubuntu{{ ansible_distribution_version }}.1+certbot+1
-    certbot_nginx_version: 0.31.0-1+ubuntu{{ ansible_distribution_version }}.1+certbot+1
-    certbot_nginx_name: python-certbot-nginx
-  when: ansible_distribution_version < "20.04"
+- import_tasks: install_certbot_ubuntu.yml
+  when: ansible_distribution == "Ubuntu"
 
-- name: Add certbot repository
-  apt_repository:
-    repo: 'ppa:certbot/certbot'
-    state: present
-  when: ansible_distribution_version < "20.04"
+- name: check if port 80 is available
+  wait_for:
+    port: 80
+    state: started
+    timeout: 1
+  register: portcheck
+  ignore_errors: yes
 
-- name: Install certbot
-  package:
-    name: "certbot={{ certbot_version }}"
-    state: present
+- name: check if nginx is running
+  command: systemctl status nginx
+  ignore_errors: yes
+  changed_when: false
+  register: service_nginx_status
 
-- name: Install certbot-nginx plugin
-  package:
-    name: "{{ certbot_nginx_name }}={{ certbot_nginx_version }}"
-    state: present
+- set_fact:
+    nginx_running: true
+  when: service_nginx_status.failed == false
 
-- import_tasks: certificate.yml
-  when: domain_name is defined
+- name: check if apache is running
+  command: systemctl status apache2
+  ignore_errors: yes
+  changed_when: false
+  register: service_apache_status
+
+- set_fact:
+    apache_running: true
+  when: service_apache_status.failed == false
+
+- name: check if nginx config is valid
+  command: nginx -t
+  ignore_errors: yes
+  changed_when: false
+  register: nginx_config_valid
+
+- name: check if nginx config is valid
+  command: apachectl configtest
+  ignore_errors: yes
+  changed_when: false
+  register: apache_config_valid
+
+- import_tasks: certificate_nginx.yml
+  when: domain_name is defined and service_nginx_status.failed == false and nginx_config_valid.failed == false
+
+# - import_tasks: certificate_apache.yml
+#   when: domain_name is defined and apache_config_valid.failed == false
+
+- import_tasks: certificate_standalone.yml
+  when: domain_name is defined and ((service_nginx_status and nginx_config_valid.failed) or (service_apache_status and apache_config_valid.failed))
+
